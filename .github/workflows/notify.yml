@@ -1,4 +1,4 @@
-name: Notice Notification
+name: Ewha Notice Bot
 
 on:
   schedule:
@@ -6,24 +6,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  check-notices:
+  crawl-and-notify:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.8'  # 3.10 → 3.8로 변경
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Run notification script
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python main.py
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: 'true'
+      
+      - name: Pull LFS files
+        run: |
+          git lfs install
+          git lfs pull
+      
+      - name: Verify model file
+        run: |
+          ls -lh models/
+          file models/kobert_llrd.pth
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python main.py
