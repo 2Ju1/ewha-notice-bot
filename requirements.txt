@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+pandas
+torch
+transformers
+sentencepiece
+gluonnlp
+kobert-tokenizer
+lxml
