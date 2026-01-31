@@ -82,5 +82,5 @@ if __name__ == "__main__":
     
     print("\n제목 -> 예측 결과:")
     for title, pred in zip(test_titles, predictions):
-        status = "✅ 중요" if pred == 1 else "❌ 불필요"
+        status = "✅ 중요" if pred == 0 else "❌ 불필요"
         print(f"  {status}: {title}")
