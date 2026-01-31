@@ -1,5 +1,6 @@
 import os
 import requests
+import re
 
 
 class TelegramNotifier:
@@ -22,7 +23,7 @@ class TelegramNotifier:
             'chat_id': self.chat_id,
             'text': message,
             'parse_mode': 'HTML',
-            'disable_web_page_preview': True
+            'disable_web_page_preview': True  # 링크 미리보기 비활성화
         }
         
         try:
@@ -54,11 +55,16 @@ class TelegramNotifier:
             link = notice.get('link', '')
             
             # HTML 특수문자 이스케이프
-            title = title.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            title = self._escape_html(title)
             
-            notice_msg = f"{i}. [{category}] {title}\n"
-            notice_msg += f"   📅 {date}\n"
-            notice_msg += f"   🔗 {link}\n\n"
+            # 링크 검증
+            if link and self._is_valid_url(link):
+                notice_msg = f"{i}. <b>[{category}]</b> {title}\n"
+                notice_msg += f"   📅 {date}\n"
+                notice_msg += f"   🔗 <a href=\"{link}\">공지 보기</a>\n\n"
+            else:
+                notice_msg = f"{i}. <b>[{category}]</b> {title}\n"
+                notice_msg += f"   📅 {date}\n\n"
             
             # 메시지가 너무 길어지면 분할 전송
             if len(message + notice_msg) > 4000:
@@ -70,6 +76,21 @@ class TelegramNotifier:
         # 마지막 메시지 전송
         self.send_message(message)
         print(f"✅ {len(notices)}개 공지 전송 완료")
+    
+    def _escape_html(self, text):
+        """HTML 특수문자 이스케이프"""
+        text = text.replace('&', '&amp;')
+        text = text.replace('<', '&lt;')
+        text = text.replace('>', '&gt;')
+        return text
+    
+    def _is_valid_url(self, url):
+        """URL 유효성 검증"""
+        if not url:
+            return False
+        # http:// 또는 https://로 시작하는지 확인
+        pattern = re.compile(r'^https?://')
+        return bool(pattern.match(url))
 
 
 # 테스트용 코드
@@ -81,7 +102,7 @@ if __name__ == "__main__":
             'category': '학사',
             'title': '테스트 공지사항입니다',
             'date': '2026.01.31',
-            'link': 'https://www.ewha.ac.kr/test'
+            'link': 'http://www.ewha.ac.kr/ewha/news/notice.do?mode=view&articleNo=12345'
         }
     ]
     

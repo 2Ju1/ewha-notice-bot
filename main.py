@@ -29,7 +29,7 @@ def main():
         # 중요한 공지만 필터링 (예측값이 1인 것)
         important_notices = [
             notice for notice, pred in zip(new_notices, predictions)
-            if pred == 1
+            if pred == 0
         ]
         
         print(f"✅ 중요 공지 {len(important_notices)}개 선별 완료\n")
