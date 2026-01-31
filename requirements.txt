@@ -5,3 +5,4 @@ torch==2.4.1
 transformers==4.30.0
 sentencepiece==0.2.0
 gluonnlp==0.10.0
+sentencepiece 

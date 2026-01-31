@@ -22,7 +22,8 @@ def test_ml(notices):
     print("\n=== ML 모델 테스트 ===")
     from model_predictor import NoticeClassifier
     
-    classifier = NoticeClassifier('models/m-bert_ES.pth')
+
+    classifier = NoticeClassifier('models/kobert_llrd.pth')
     titles = [n['title'] for n in notices[:5]]
     predictions = classifier.predict(titles)
     

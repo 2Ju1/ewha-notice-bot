@@ -41,11 +41,14 @@ class NoticeClassifier:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"🔧 디바이스: {self.device}")
         
-        # AutoTokenizer로 변경 (kobert-tokenizer 대체)
-        self.tokenizer = AutoTokenizer.from_pretrained('skt/kobert-base-v1')
+        # use_fast=False 추가 (tiktoken 없이 사용)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            'skt/kobert-base-v1',
+            use_fast=False
+        )
         bertmodel = BertModel.from_pretrained('skt/kobert-base-v1', return_dict=False)
         
-        # 모델 초기화 (dr_rate=0.5는 학습 시 사용한 값)
+        # 모델 초기화
         self.model = BERTClassifier(bertmodel, dr_rate=0.5)
         
         # 학습된 가중치 로드
@@ -72,8 +75,12 @@ class NoticeClassifier:
             )
             
             token_ids = encoded['input_ids'].to(self.device)
-            segment_ids = encoded['token_type_ids'].to(self.device)
-            valid_length = torch.tensor([(token_ids != 0).sum().item()]).to(self.device)
+            
+            # segment_ids를 0으로 초기화 (수정된 부분)
+            segment_ids = torch.zeros_like(token_ids).to(self.device)
+            
+            # valid_length 계산
+            valid_length = torch.tensor([(token_ids != 0).sum().item()])
             
             # 예측
             with torch.no_grad():

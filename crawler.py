@@ -1,127 +1,146 @@
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
 from datetime import datetime
 import time
+import re
 
 
 class EwhaNoticeCrawler:
     def __init__(self):
-        self.base_url = 'https://www.ewha.ac.kr'
-        self.notice_urls = {
-            '전체공지': '/ewha/news/notice.do',
-            '학사공지': '/ewha/news/notice.do?mode=list&srCategoryId=1',
-            '장학공지': '/ewha/news/notice.do?mode=list&srCategoryId=2',
-            '입학공지': '/ewha/news/notice.do?mode=list&srCategoryId=3',
-            '등록금공지': '/ewha/news/notice.do?mode=list&srCategoryId=4',
-        }
+        self.base_url = 'http://www.ewha.ac.kr'
+        self.notice_url = '/ewha/news/notice.do'
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/98.0.4758.102"
         }
     
     def crawl_notices(self, max_pages=2):
         """최근 공지사항 크롤링"""
         all_notices = []
         
-        for category, url_path in self.notice_urls.items():
-            print(f"📥 {category} 크롤링 중...")
-            
-            for page in range(1, max_pages + 1):
-                try:
-                    url = f"{self.base_url}{url_path}"
-                    if '?' in url:
-                        url += f"&srSearchKey=&srSearchVal=&page={page}"
-                    else:
-                        url += f"?page={page}"
-                    
-                    response = requests.get(url, headers=self.headers, timeout=10)
-                    response.raise_for_status()
-                    response.encoding = 'utf-8'
-                    
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    
-                    # 공지사항 테이블 찾기 (실제 사이트 구조에 맞춤)
-                    notice_table = soup.select_one('table.board-table')
-                    if not notice_table:
-                        notice_table = soup.select_one('.board-list')
-                    
-                    if not notice_table:
-                        print(f"   ⚠️ {category} 페이지 {page}: 테이블을 찾을 수 없음")
-                        continue
-                    
-                    notice_rows = notice_table.select('tbody tr')
-                    
-                    for row in notice_rows:
-                        try:
-                            # 번호 (공지/일반 구분)
-                            num_elem = row.select_one('td:first-child')
-                            is_important = num_elem and '공지' in num_elem.get_text(strip=True)
-                            
-                            # 구분 (학사/장학/입학/등록금/일반)
-                            category_elem = row.select('td')[1] if len(row.select('td')) > 1 else None
-                            sub_category = category_elem.get_text(strip=True) if category_elem else ''
-                            
-                            # 제목과 링크
-                            title_elem = row.select_one('td a')
-                            if not title_elem:
-                                continue
-                            
-                            title = title_elem.get_text(strip=True)
-                            # 'N' 마크 제거
-                            title = title.replace(' N', '').replace('N ', '').strip()
-                            
-                            link = title_elem.get('href', '')
-                            
-                            # 전체 URL 생성
-                            if link.startswith('http'):
-                                full_link = link
-                            elif link.startswith('/'):
-                                full_link = f"{self.base_url}{link}"
-                            else:
-                                full_link = f"{self.base_url}/ewha/news/{link}"
-                            
-                            # 조회수와 날짜가 함께 있는 td
-                            td_elements = row.select('td')
-                            
-                            # 날짜 추출 (마지막에서 두 번째 또는 마지막 td)
-                            date = ''
-                            for td in reversed(td_elements):
-                                td_text = td.get_text(strip=True)
-                                if '2026' in td_text or '2025' in td_text:
-                                    # "조회수 xxx YYYY.MM.DD" 형식에서 날짜만 추출
-                                    parts = td_text.split()
-                                    for part in parts:
-                                        if '.' in part and len(part) >= 8:
-                                            date = part
-                                            break
-                                    if date:
-                                        break
-                            
-                            # 고유 ID (제목 + 날짜로 중복 방지)
-                            notice_id = f"{title}_{date}".replace(' ', '_').replace('/', '_')
-                            
-                            all_notices.append({
-                                'id': notice_id,
-                                'category': f"{category}>{sub_category}" if sub_category else category,
-                                'title': title,
-                                'link': full_link,
-                                'date': date,
-                                'is_important': is_important,
-                                'crawled_at': datetime.now().isoformat()
-                            })
-                            
-                        except Exception as e:
-                            print(f"⚠️ 공지 파싱 오류: {e}")
-                            continue
-                    
-                    print(f"   페이지 {page}: {len(notice_rows)}개 발견")
-                    time.sleep(0.5)  # 서버 부담 줄이기
-                    
-                except Exception as e:
-                    print(f"⚠️ {category} 페이지 {page} 크롤링 실패: {e}")
-                    continue
+        print(f"📥 이화여대 공지사항 크롤링 중...")
         
-        # 중복 제거 (같은 공지가 여러 카테고리에 나올 수 있음)
+        for page in range(1, max_pages + 1):
+            try:
+                # 페이지 URL 생성
+                if page == 1:
+                    url = f"{self.base_url}{self.notice_url}"
+                else:
+                    url = f"{self.base_url}{self.notice_url}?artclList={page}"
+                
+                print(f"   페이지 {page} 요청: {url}")
+                
+                # 웹 페이지 요청
+                req = requests.get(url, headers=self.headers, timeout=10)
+                req.raise_for_status()
+                html_content = req.text
+                
+                # BeautifulSoup 객체 생성
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+                # 제목 박스 찾기 (b-title-box 클래스)
+                title_boxes = soup.find_all(attrs={'class': 'b-title-box'})
+                
+                if not title_boxes:
+                    print(f"   ⚠️ 페이지 {page}: 제목 박스를 찾을 수 없음")
+                    # 대안: 테이블 행으로 찾기
+                    notice_table = soup.select_one('table.board-table')
+                    if notice_table:
+                        notice_rows = notice_table.select('tbody tr')
+                    else:
+                        break
+                else:
+                    # b-title-box가 있는 행들 찾기
+                    notice_rows = [box.find_parent('tr') for box in title_boxes if box.find_parent('tr')]
+                
+                if not notice_rows:
+                    print(f"   ⚠️ 페이지 {page}: 공지를 찾을 수 없음")
+                    break
+                
+                for row in notice_rows:
+                    try:
+                        tds = row.select('td')
+                        if len(tds) < 5:
+                            continue
+                        
+                        # 1. 번호 (공지/일반)
+                        num_td = tds[0]
+                        num_text = num_td.get_text(strip=True)
+                        is_important = '공지' in num_text
+                        
+                        # 2. 구분 (학사/장학/입학/등록금/일반)
+                        category_td = tds[1]
+                        category = category_td.get_text(strip=True)
+                        
+                        # 3. 제목과 링크 (b-title-box 안에 있음)
+                        title_box = tds[2].find(attrs={'class': 'b-title-box'})
+                        if not title_box:
+                            # 대안: a 태그 찾기
+                            title_box = tds[2].find('a')
+                        
+                        if not title_box:
+                            continue
+                        
+                        # 제목 추출
+                        title = title_box.get_text(strip=True)
+                        # 'N' 제거
+                        title = title.replace(' N', '').replace('N ', '').strip()
+                        
+                        # 링크 추출
+                        link_elem = title_box if title_box.name == 'a' else title_box.find('a')
+                        if not link_elem:
+                            link_elem = tds[2].find('a')
+                        
+                        link = link_elem.get('href', '') if link_elem else ''
+                        
+                        if link.startswith('http'):
+                            full_link = link
+                        elif link.startswith('/'):
+                            full_link = f"{self.base_url}{link}"
+                        else:
+                            full_link = f"{self.base_url}/ewha/news/{link}"
+                        
+                        # 4. 조회수
+                        views_td = tds[3]
+                        views = views_td.get_text(strip=True)
+                        
+                        # 5. 날짜
+                        date_td = tds[4]
+                        date_text = date_td.get_text(strip=True)
+                        # YYYY.MM.DD 형식 추출
+                        date_match = re.search(r'(\d{4}\.\d{2}\.\d{2})', date_text)
+                        date = date_match.group(1) if date_match else date_text
+                        
+                        # 고유 ID 생성
+                        notice_id = f"{title}_{date}".replace(' ', '_').replace('/', '_').replace('.', '_').replace('[', '').replace(']', '')
+                        
+                        all_notices.append({
+                            'id': notice_id,
+                            'category': category if category else '일반',
+                            'title': title,
+                            'link': full_link,
+                            'date': date,
+                            'views': views,
+                            'is_important': is_important,
+                            'crawled_at': datetime.now().isoformat()
+                        })
+                        
+                    except Exception as e:
+                        print(f"⚠️ 공지 파싱 오류: {e}")
+                        continue
+                
+                print(f"   페이지 {page}: {len(notice_rows)}개 처리 완료")
+                time.sleep(1)  # 서버 부담 줄이기
+                
+            except requests.exceptions.HTTPError as e:
+                print(f"⚠️ 페이지 {page} HTTP 오류: {e}")
+                break
+            except Exception as e:
+                print(f"⚠️ 페이지 {page} 크롤링 실패: {e}")
+                import traceback
+                traceback.print_exc()
+                break
+        
+        # 중복 제거
         seen_ids = set()
         unique_notices = []
         for notice in all_notices:
@@ -129,7 +148,7 @@ class EwhaNoticeCrawler:
                 seen_ids.add(notice['id'])
                 unique_notices.append(notice)
         
-        print(f"✅ 총 {len(unique_notices)}개 공지 수집 완료 (중복 제거)")
+        print(f"✅ 총 {len(unique_notices)}개 공지 수집 완료")
         return unique_notices
     
     def get_new_notices(self, seen_file='seen_notices.json'):
@@ -140,7 +159,10 @@ class EwhaNoticeCrawler:
         # 기존에 본 공지 로드
         if os.path.exists(seen_file):
             with open(seen_file, 'r', encoding='utf-8') as f:
-                seen_ids = set(json.load(f))
+                try:
+                    seen_ids = set(json.load(f))
+                except:
+                    seen_ids = set()
         else:
             seen_ids = set()
         
@@ -158,16 +180,25 @@ class EwhaNoticeCrawler:
         with open(seen_file, 'w', encoding='utf-8') as f:
             json.dump(updated_seen, f, ensure_ascii=False, indent=2)
         
-        print(f"✅ 전체 {len(all_notices)}개 중 새 공지 {len(new_notices)}개 발견")
+        print(f"✅ 새 공지 {len(new_notices)}개 발견")
         return new_notices
 
 
 # 테스트용 코드
 if __name__ == "__main__":
     crawler = EwhaNoticeCrawler()
-    notices = crawler.get_new_notices()
     
-    print(f"\n📋 새 공지 {len(notices)}개:")
-    for notice in notices[:10]:  # 최근 10개만 출력
-        print(f"  - [{notice['category']}] {notice['title']}")
-        print(f"    {notice['date']} | {notice['link']}")
+    # 전체 공지 크롤링 테스트
+    print("=== 전체 공지 크롤링 테스트 ===")
+    all_notices = crawler.crawl_notices(max_pages=1)
+    
+    print(f"\n📋 수집된 공지 {len(all_notices)}개:")
+    for i, notice in enumerate(all_notices[:5], 1):
+        print(f"\n{i}. [{notice['category']}] {notice['title']}")
+        print(f"   날짜: {notice['date']} | 조회수: {notice['views']} | 중요: {'⭐ 공지' if notice['is_important'] else '일반'}")
+        print(f"   링크: {notice['link']}")
+    
+    # 새 공지만 필터링 테스트
+    print("\n\n=== 새 공지 필터링 테스트 ===")
+    new_notices = crawler.get_new_notices()
+    print(f"\n새로운 공지 {len(new_notices)}개 발견")
