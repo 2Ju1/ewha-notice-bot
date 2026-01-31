@@ -1,104 +1,88 @@
-# telegram_bot.py
-
+import os
 import requests
-from datetime import datetime
 
-class TelegramBot:
-    def __init__(self, bot_token, chat_id):
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.api_url = f"https://api.telegram.org/bot{bot_token}"
+
+class TelegramNotifier:
+    def __init__(self):
+        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        
+        if not self.bot_token or not self.chat_id:
+            raise ValueError("❌ TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID 환경변수가 설정되지 않았습니다.")
+        
+        self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
     
-    def send_message(self, text):
-        """메시지 전송"""
-        url = f"{self.api_url}/sendMessage"
+    def send_message(self, message):
+        """텔레그램 메시지 전송"""
+        # 메시지 길이 제한 (4096자)
+        if len(message) > 4000:
+            message = message[:4000] + "\n\n... (메시지가 너무 길어 생략됨)"
+        
         payload = {
             'chat_id': self.chat_id,
-            'text': text,
+            'text': message,
             'parse_mode': 'HTML',
-            'disable_web_page_preview': False  # 링크 미리보기 활성화
+            'disable_web_page_preview': True
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(self.api_url, json=payload, timeout=10)
             response.raise_for_status()
+            print(f"✅ 메시지 전송 성공")
             return True
-        except Exception as e:
+        except requests.exceptions.HTTPError as e:
             print(f"❌ 메시지 전송 실패: {e}")
+            print(f"   응답 내용: {response.text}")
+            return False
+        except Exception as e:
+            print(f"❌ 메시지 전송 오류: {e}")
             return False
     
     def send_notices(self, notices):
-        """공지사항들을 보기 좋게 포맷해서 전송"""
+        """공지사항 목록을 텔레그램으로 전송"""
         if not notices:
+            print("📭 전송할 공지가 없습니다.")
             return
         
-        # 헤더 메시지
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        header = f"🎓 <b>이화여대 새 공지</b> ({len(notices)}건)\n"
-        header += f"⏰ {now}\n"
-        header += "─" * 30 + "\n\n"
+        # 메시지 생성
+        message = "🔔 <b>이화여대 새 공지사항</b>\n\n"
         
-        # 카테고리별로 그룹화
-        by_category = {}
-        for notice in notices:
-            cat = notice['category']
-            if cat not in by_category:
-                by_category[cat] = []
-            by_category[cat].append(notice)
-        
-        # 중요도 순 정렬 (중요 공지 먼저)
-        for cat in by_category:
-            by_category[cat].sort(key=lambda x: (not x.get('is_important', False), x['date']), reverse=True)
-        
-        # 카테고리별 메시지 생성
-        messages = []
-        current_message = header
-        
-        for category, items in by_category.items():
-            cat_section = f"📌 <b>{category}</b> ({len(items)}건)\n\n"
+        for i, notice in enumerate(notices, 1):
+            category = notice.get('category', '일반')
+            title = notice.get('title', '제목 없음')
+            date = notice.get('date', '')
+            link = notice.get('link', '')
             
-            for i, notice in enumerate(items, 1):
-                # 중요 공지 표시
-                prefix = "⭐ " if notice.get('is_important') else f"{i}. "
-                
-                item_text = f"{prefix}<b>{notice['title']}</b>\n"
-                item_text += f"   📅 {notice['date']}"
-                if notice.get('writer'):
-                    item_text += f" | {notice['writer']}"
-                item_text += f"\n   🔗 <a href='{notice['link']}'>공지 보기</a>\n\n"
-                
-                # 메시지 길이 체크 (텔레그램 4096자 제한)
-                if len(current_message + cat_section + item_text) > 3800:
-                    messages.append(current_message)
-                    current_message = cat_section + item_text
-                else:
-                    if cat_section not in current_message:
-                        current_message += cat_section
-                    current_message += item_text
+            # HTML 특수문자 이스케이프
+            title = title.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            notice_msg = f"{i}. [{category}] {title}\n"
+            notice_msg += f"   📅 {date}\n"
+            notice_msg += f"   🔗 {link}\n\n"
+            
+            # 메시지가 너무 길어지면 분할 전송
+            if len(message + notice_msg) > 4000:
+                self.send_message(message)
+                message = "🔔 <b>이화여대 새 공지사항 (계속)</b>\n\n" + notice_msg
+            else:
+                message += notice_msg
         
-        # 마지막 메시지 추가
-        if current_message != header:
-            messages.append(current_message)
-        
-        # 메시지 전송
-        success_count = 0
-        for msg in messages:
-            if self.send_message(msg):
-                success_count += 1
-        
-        print(f"✅ {success_count}/{len(messages)} 메시지 전송 완료")
-        return success_count > 0
+        # 마지막 메시지 전송
+        self.send_message(message)
+        print(f"✅ {len(notices)}개 공지 전송 완료")
 
 
-# 테스트용
+# 테스트용 코드
 if __name__ == "__main__":
-    import os
+    notifier = TelegramNotifier()
     
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    test_notices = [
+        {
+            'category': '학사',
+            'title': '테스트 공지사항입니다',
+            'date': '2026.01.31',
+            'link': 'https://www.ewha.ac.kr/test'
+        }
+    ]
     
-    if token and chat_id:
-        bot = TelegramBot(token, chat_id)
-        bot.send_message("✅ 텔레그램 봇 테스트 성공!")
-    else:
-        print("환경변수를 설정해주세요")
+    notifier.send_notices(test_notices)
