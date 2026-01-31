@@ -1,43 +1,29 @@
-name: 이화여대 공지 알림
+name: Notice Notification
 
 on:
   schedule:
-    - cron: '0 0,9 * * *'  # 매일 9시, 18시 (KST)
-  workflow_dispatch:  # 수동 실행
+    - cron: '0 0,9 * * *'
+  workflow_dispatch:
 
 jobs:
-  notify:
+  check-notices:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 코드 체크아웃
-      uses: actions/checkout@v3
-      
-    - name: Python 3.10 설정
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
-        
-    - name: 의존성 설치
+        python-version: '3.8'  # 3.10 → 3.8로 변경
+    
+    - name: Install dependencies
       run: |
-        pip install --upgrade pip
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
-        
-    - name: 공지 크롤링 및 알림
+    
+    - name: Run notification script
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
-      
-    - name: 변경사항 커밋
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add seen_notices.json
-        git diff --quiet && git diff --staged --quiet || git commit -m "Update seen notices [skip ci]"
-        
-    - name: 변경사항 푸시
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        branch: ${{ github.ref }}
