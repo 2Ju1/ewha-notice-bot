@@ -1,19 +1,19 @@
-# crawler.py
-
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
 import time
 
+
 class EwhaNoticeCrawler:
     def __init__(self):
         self.base_url = 'https://www.ewha.ac.kr'
         self.notice_urls = {
-            '일반공지': '/ewha/news/notice.do',
+            '전체공지': '/ewha/news/notice.do',
             '학사공지': '/ewha/news/notice.do?mode=list&srCategoryId=1',
             '장학공지': '/ewha/news/notice.do?mode=list&srCategoryId=2',
             '입학공지': '/ewha/news/notice.do?mode=list&srCategoryId=3',
+            '등록금공지': '/ewha/news/notice.do?mode=list&srCategoryId=4',
         }
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -40,25 +40,36 @@ class EwhaNoticeCrawler:
                     
                     soup = BeautifulSoup(response.text, 'html.parser')
                     
-                    # 공지사항 테이블 찾기
-                    notice_rows = soup.select('table.board-table tbody tr')
+                    # 공지사항 테이블 찾기 (실제 사이트 구조에 맞춤)
+                    notice_table = soup.select_one('table.board-table')
+                    if not notice_table:
+                        notice_table = soup.select_one('.board-list')
                     
-                    if not notice_rows:
-                        # 다른 선택자 시도
-                        notice_rows = soup.select('.bd-list tbody tr')
+                    if not notice_table:
+                        print(f"   ⚠️ {category} 페이지 {page}: 테이블을 찾을 수 없음")
+                        continue
+                    
+                    notice_rows = notice_table.select('tbody tr')
                     
                     for row in notice_rows:
                         try:
                             # 번호 (공지/일반 구분)
-                            num_elem = row.select_one('td.td-num')
+                            num_elem = row.select_one('td:first-child')
                             is_important = num_elem and '공지' in num_elem.get_text(strip=True)
                             
+                            # 구분 (학사/장학/입학/등록금/일반)
+                            category_elem = row.select('td')[1] if len(row.select('td')) > 1 else None
+                            sub_category = category_elem.get_text(strip=True) if category_elem else ''
+                            
                             # 제목과 링크
-                            title_elem = row.select_one('td.td-subject a') or row.select_one('.subject a')
+                            title_elem = row.select_one('td a')
                             if not title_elem:
                                 continue
                             
                             title = title_elem.get_text(strip=True)
+                            # 'N' 마크 제거
+                            title = title.replace(' N', '').replace('N ', '').strip()
+                            
                             link = title_elem.get('href', '')
                             
                             # 전체 URL 생성
@@ -69,24 +80,32 @@ class EwhaNoticeCrawler:
                             else:
                                 full_link = f"{self.base_url}/ewha/news/{link}"
                             
-                            # 날짜
-                            date_elem = row.select_one('td.td-date') or row.select_one('.date')
-                            date = date_elem.get_text(strip=True) if date_elem else ''
+                            # 조회수와 날짜가 함께 있는 td
+                            td_elements = row.select('td')
                             
-                            # 작성자/부서
-                            writer_elem = row.select_one('td.td-write') or row.select_one('.writer')
-                            writer = writer_elem.get_text(strip=True) if writer_elem else ''
+                            # 날짜 추출 (마지막에서 두 번째 또는 마지막 td)
+                            date = ''
+                            for td in reversed(td_elements):
+                                td_text = td.get_text(strip=True)
+                                if '2026' in td_text or '2025' in td_text:
+                                    # "조회수 xxx YYYY.MM.DD" 형식에서 날짜만 추출
+                                    parts = td_text.split()
+                                    for part in parts:
+                                        if '.' in part and len(part) >= 8:
+                                            date = part
+                                            break
+                                    if date:
+                                        break
                             
                             # 고유 ID (제목 + 날짜로 중복 방지)
-                            notice_id = f"{title}_{date}".replace(' ', '_')
+                            notice_id = f"{title}_{date}".replace(' ', '_').replace('/', '_')
                             
                             all_notices.append({
                                 'id': notice_id,
-                                'category': category,
+                                'category': f"{category}>{sub_category}" if sub_category else category,
                                 'title': title,
                                 'link': full_link,
                                 'date': date,
-                                'writer': writer,
                                 'is_important': is_important,
                                 'crawled_at': datetime.now().isoformat()
                             })
@@ -102,8 +121,16 @@ class EwhaNoticeCrawler:
                     print(f"⚠️ {category} 페이지 {page} 크롤링 실패: {e}")
                     continue
         
-        print(f"✅ 총 {len(all_notices)}개 공지 수집 완료")
-        return all_notices
+        # 중복 제거 (같은 공지가 여러 카테고리에 나올 수 있음)
+        seen_ids = set()
+        unique_notices = []
+        for notice in all_notices:
+            if notice['id'] not in seen_ids:
+                seen_ids.add(notice['id'])
+                unique_notices.append(notice)
+        
+        print(f"✅ 총 {len(unique_notices)}개 공지 수집 완료 (중복 제거)")
+        return unique_notices
     
     def get_new_notices(self, seen_file='seen_notices.json'):
         """새로운 공지만 필터링"""
@@ -141,6 +168,6 @@ if __name__ == "__main__":
     notices = crawler.get_new_notices()
     
     print(f"\n📋 새 공지 {len(notices)}개:")
-    for notice in notices[:5]:  # 최근 5개만 출력
+    for notice in notices[:10]:  # 최근 10개만 출력
         print(f"  - [{notice['category']}] {notice['title']}")
         print(f"    {notice['date']} | {notice['link']}")
