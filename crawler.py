@@ -37,20 +37,13 @@ class EwhaNoticeCrawler:
                 # BeautifulSoup 객체 생성
                 soup = BeautifulSoup(html_content, 'html.parser')
                 
-                # 제목 박스 찾기 (b-title-box 클래스)
-                title_boxes = soup.find_all(attrs={'class': 'b-title-box'})
+                # 테이블 찾기
+                notice_table = soup.select_one('table.board-table')
+                if not notice_table:
+                    print(f"   ⚠️ 페이지 {page}: 테이블을 찾을 수 없음")
+                    break
                 
-                if not title_boxes:
-                    print(f"   ⚠️ 페이지 {page}: 제목 박스를 찾을 수 없음")
-                    # 대안: 테이블 행으로 찾기
-                    notice_table = soup.select_one('table.board-table')
-                    if notice_table:
-                        notice_rows = notice_table.select('tbody tr')
-                    else:
-                        break
-                else:
-                    # b-title-box가 있는 행들 찾기
-                    notice_rows = [box.find_parent('tr') for box in title_boxes if box.find_parent('tr')]
+                notice_rows = notice_table.select('tbody tr')
                 
                 if not notice_rows:
                     print(f"   ⚠️ 페이지 {page}: 공지를 찾을 수 없음")
@@ -71,33 +64,59 @@ class EwhaNoticeCrawler:
                         category_td = tds[1]
                         category = category_td.get_text(strip=True)
                         
-                        # 3. 제목과 링크 (b-title-box 안에 있음)
-                        title_box = tds[2].find(attrs={'class': 'b-title-box'})
-                        if not title_box:
-                            # 대안: a 태그 찾기
-                            title_box = tds[2].find('a')
-                        
-                        if not title_box:
-                            continue
+                        # 3. 제목과 링크
+                        title_td = tds[2]
                         
                         # 제목 추출
-                        title = title_box.get_text(strip=True)
-                        # 'N' 제거
+                        title_box = title_td.find(attrs={'class': 'b-title-box'})
+                        if title_box:
+                            title = title_box.get_text(strip=True)
+                        else:
+                            # b-title-box가 없으면 전체 텍스트에서 추출
+                            full_text = title_td.get_text(strip=True)
+                            # 카테고리/조회수 이전까지만 추출
+                            title_match = re.match(r'(.+?)\s*N?\s*(학사|장학|입학|등록금|일반)?\s*조회수', full_text)
+                            if title_match:
+                                title = title_match.group(1).strip()
+                            else:
+                                title = full_text.split('\n')[0]
+                        
+                        # 'N' 제거 및 정리
                         title = title.replace(' N', '').replace('N ', '').strip()
                         
                         # 링크 추출
-                        link_elem = title_box if title_box.name == 'a' else title_box.find('a')
-                        if not link_elem:
-                            link_elem = tds[2].find('a')
+                        link_elem = title_td.find('a')
+                        link = ''
                         
-                        link = link_elem.get('href', '') if link_elem else ''
+                        if link_elem:
+                            # href 속성에서 추출
+                            href = link_elem.get('href', '')
+                            
+                            # onclick에서 추출 (goView 함수 사용하는 경우)
+                            onclick = link_elem.get('onclick', '')
+                            if onclick and 'goView' in onclick:
+                                match = re.search(r"goView\('([^']+)'\)", onclick)
+                                if match:
+                                    link = match.group(1)
+                            elif href:
+                                link = href
                         
-                        if link.startswith('http'):
-                            full_link = link
-                        elif link.startswith('/'):
-                            full_link = f"{self.base_url}{link}"
+                        # URL 완성
+                        if link:
+                            if link.startswith('?'):
+                                # ?mode=view&articleNo=... 형식
+                                full_link = f"{self.base_url}/ewha/news/notice.do{link}"
+                            elif link.startswith('/'):
+                                full_link = f"{self.base_url}{link}"
+                            elif link.startswith('http'):
+                                full_link = link
+                            else:
+                                full_link = f"{self.base_url}/ewha/news/notice.do?{link}"
+                            
+                            # URL 정리 (공백 제거)
+                            full_link = full_link.replace(' ', '')
                         else:
-                            full_link = f"{self.base_url}/ewha/news/{link}"
+                            full_link = ''
                         
                         # 4. 조회수
                         views_td = tds[3]
@@ -106,12 +125,11 @@ class EwhaNoticeCrawler:
                         # 5. 날짜
                         date_td = tds[4]
                         date_text = date_td.get_text(strip=True)
-                        # YYYY.MM.DD 형식 추출
                         date_match = re.search(r'(\d{4}\.\d{2}\.\d{2})', date_text)
                         date = date_match.group(1) if date_match else date_text
                         
                         # 고유 ID 생성
-                        notice_id = f"{title}_{date}".replace(' ', '_').replace('/', '_').replace('.', '_').replace('[', '').replace(']', '')
+                        notice_id = f"{title}_{date}".replace(' ', '_').replace('/', '_').replace('.', '_').replace('[', '').replace(']', '').replace('(', '').replace(')', '')
                         
                         all_notices.append({
                             'id': notice_id,
