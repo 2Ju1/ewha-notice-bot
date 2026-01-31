@@ -52,7 +52,7 @@ class NoticeClassifier:
         self.model = BERTClassifier(bertmodel, dr_rate=0.5)
         
         # 학습된 가중치 로드
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False))
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
         self.model.to(self.device)
         self.model.eval()
         
