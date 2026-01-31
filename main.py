@@ -1,59 +1,86 @@
-from crawler import EwhaNoticeCrawler
-from model_predictor import NoticeClassifier
-from telegram_bot import TelegramNotifier  # TelegramBot → TelegramNotifier
+import torch
+from transformers import BertTokenizer, BertModel
+import torch.nn as nn
 
 
-def main():
-    print("\n" + "="*50)
-    print("🔔 이화여대 공지사항 자동 알림 시스템")
-    print("="*50 + "\n")
+class BERTClassifier(nn.Module):
+    def __init__(self, bert_model, num_classes=2, hidden_size=768, dropout_rate=0.1):
+        super(BERTClassifier, self).__init__()
+        self.bert = bert_model
+        self.dropout = nn.Dropout(dropout_rate)
+        self.classifier = nn.Linear(hidden_size, num_classes)
     
-    # 1. 공지사항 크롤링
-    print("[1/3] 📥 공지사항 크롤링 중...")
-    crawler = EwhaNoticeCrawler()
-    new_notices = crawler.get_new_notices()
-    
-    if not new_notices:
-        print("📭 새로운 공지가 없습니다.")
-        return
-    
-    print(f"✅ {len(new_notices)}개의 새 공지 발견\n")
-    
-    # 2. 중요도 분류
-    print(f"[2/3] 🤖 KoBERT 모델로 분류 중... ({len(new_notices)}개)")
-    try:
-        classifier = NoticeClassifier()
-        titles = [notice['title'] for notice in new_notices]
-        predictions = classifier.predict(titles)
+    def forward(self, input_ids, attention_mask):
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.pooler_output
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+        return logits
+
+
+class NoticeClassifier:
+    def __init__(self, model_path='models/kobert_llrd.pth'):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"🔧 디바이스: {self.device}")
         
-        # 중요한 공지만 필터링 (예측값이 1인 것)
-        important_notices = [
-            notice for notice, pred in zip(new_notices, predictions)
-            if pred == 0
-        ]
+        # KoBERT 토크나이저 및 모델 로드
+        self.tokenizer = BertTokenizer.from_pretrained('monologg/kobert')
+        bert_model = BertModel.from_pretrained('monologg/kobert')
         
-        print(f"✅ 중요 공지 {len(important_notices)}개 선별 완료\n")
+        # 분류 모델 초기화
+        self.model = BERTClassifier(bert_model, num_classes=2).to(self.device)
         
-    except Exception as e:
-        print(f"⚠️ 모델 분류 실패: {e}")
-        print("   전체 공지를 전송합니다.\n")
-        important_notices = new_notices
-    
-    # 3. 텔레그램 전송
-    if important_notices:
-        print(f"[3/3] 📤 텔레그램으로 {len(important_notices)}개 공지 전송 중...")
+        # 모델 가중치 로드 (strict=False로 position_ids 무시)
         try:
-            notifier = TelegramNotifier()  # TelegramBot → TelegramNotifier
-            notifier.send_notices(important_notices)
+            state_dict = torch.load(model_path, map_location=self.device)
+            self.model.load_state_dict(state_dict, strict=False)
+            self.model.eval()
+            print("✅ KoBERT 모델 로드 완료")
         except Exception as e:
-            print(f"❌ 텔레그램 전송 실패: {e}")
-    else:
-        print("📭 전송할 중요 공지가 없습니다.")
+            raise RuntimeError(f"모델 로드 실패: {e}")
     
-    print("\n" + "="*50)
-    print("✅ 작업 완료!")
-    print("="*50)
+    def predict(self, titles, max_length=128):
+        """공지 제목 리스트를 입력받아 중요도 예측"""
+        predictions = []
+        
+        self.model.eval()
+        with torch.no_grad():
+            for title in titles:
+                # 토크나이징
+                encoded = self.tokenizer.encode_plus(
+                    title,
+                    add_special_tokens=True,
+                    max_length=max_length,
+                    padding='max_length',
+                    truncation=True,
+                    return_attention_mask=True,
+                    return_tensors='pt'
+                )
+                
+                input_ids = encoded['input_ids'].to(self.device)
+                attention_mask = encoded['attention_mask'].to(self.device)
+                
+                # 예측
+                logits = self.model(input_ids, attention_mask)
+                pred = torch.argmax(logits, dim=1).item()
+                predictions.append(pred)
+        
+        return predictions
 
 
+# 테스트용 코드
 if __name__ == "__main__":
-    main()
+    classifier = NoticeClassifier()
+    
+    test_titles = [
+        "[회계팀] 2026학년도 학부 신입생 및 편입생 등록금 납부 안내",
+        "[학사지원팀] 2026-1학기 수강시뮬레이션 안내",
+        "[조교모집] 2026-1학기 조교 모집"
+    ]
+    
+    predictions = classifier.predict(test_titles)
+    
+    print("\n제목 -> 예측 결과:")
+    for title, pred in zip(test_titles, predictions):
+        status = "✅ 중요" if pred == 1 else "❌ 불필요"
+        print(f"  {status}: {title}")
